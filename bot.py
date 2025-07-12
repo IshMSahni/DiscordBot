@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 # Load secrets
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-USER_ID = int(os.getenv("USER_ID"))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+USER_ID = int(os.getenv("USER_ID", "0"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME")
 
@@ -21,8 +21,12 @@ GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME")
 openAIClient = OpenAI(api_key=OPENAI_API_KEY)
 
 # Setup Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("google-creds.json", scope)
+scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+json_str = os.getenv("GOOGLE_CREDS_JSON")
+if not json_str:
+    raise Exception("Missing GOOGLE_CREDS_JSON environment variable")
+creds_dict = json.loads(json_str)
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gc = gspread.authorize(creds)
 sheet = gc.open(GOOGLE_SHEET_NAME)
 trades_sheet = sheet.worksheet("Trades")
@@ -61,7 +65,7 @@ def parse_trade_message_ai(message):
     current_friday = get_current_friday()
     next_friday = get_next_friday()
     current_year = datetime.now().year
-    
+
     prompt = f"""
     You're an expert trading assistant. Parse this trading message into structured JSON. Handle complex language and trading slang.
 
@@ -168,16 +172,16 @@ def parse_trade_message_ai(message):
             temperature=0.1  # Lower temperature for more consistent parsing
         )
         content = response.choices[0].message.content.strip()
-        
+
         # Clean up response in case AI adds markdown formatting
         if content.startswith("```json"):
             content = content[7:]
         if content.endswith("```"):
             content = content[:-3]
         content = content.strip()
-        
+
         data = json.loads(content)
-        
+
         # Post-processing validation and cleanup
         if "error" not in data:
             # Set defaults but don't assume quantity
@@ -187,7 +191,7 @@ def parse_trade_message_ai(message):
             data.setdefault("expiry", "")
             data.setdefault("option_type", "")
             data.setdefault("notes", "")
-            
+
             # Validate and normalize action
             action = data.get("action", "").upper()
             valid_actions = {"BUY", "SELL", "BTO", "STO", "BTC", "STC"}
@@ -205,9 +209,9 @@ def parse_trade_message_ai(message):
                     data["action"] = action_mapping[action]
                 else:
                     return {"error": f"Invalid action: {action}"}
-        
+
         return data
-        
+
     except json.JSONDecodeError as e:
         return {"error": f"Failed to parse AI response as JSON: {str(e)}"}
     except Exception as e:
@@ -242,14 +246,14 @@ TRADING_KEYWORDS = {
 def looks_like_trade_message(message):
     """Check if a message contains trading-related keywords"""
     message_lower = message.lower()
-    
+
     # Count keyword matches
     matches = 0
     for category, keywords in TRADING_KEYWORDS.items():
         for keyword in keywords:
             if keyword in message_lower:
                 matches += 1
-    
+
     # Also check for common patterns
     patterns = [
         r'\$\d+',  # Dollar amounts
@@ -259,11 +263,11 @@ def looks_like_trade_message(message):
         r'\d+\s*(worth|contracts?)',  # Quantity descriptions
         r'[A-Z]{2,5}\s+\d+[CP]?',  # Symbol + strike pattern
     ]
-    
+
     for pattern in patterns:
         if re.search(pattern, message, re.IGNORECASE):
             matches += 1
-    
+
     # Consider it trade-related if it has 2+ matches
     return matches >= 2
 
@@ -304,7 +308,7 @@ async def on_message(message):
 
     parsed = parse_trade_message_ai(message.content)
     print(f"Parsed result: {parsed}")
-    
+
     if "error" in parsed:
         # Check if this looks like a trade message even though it failed to parse
         if looks_like_trade_message(message.content):
@@ -336,7 +340,7 @@ async def on_message(message):
                 print(f"⚠️ Logged unparsed trade (invalid action): {message.content}")
             else:
                 log_error(f"Invalid action: {action} | Original: {message.content}")
-            
+
     except (ValueError, KeyError) as e:
         # Data processing error but might still be a trade
         if looks_like_trade_message(message.content):
