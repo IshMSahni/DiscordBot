@@ -2,9 +2,10 @@ import discord
 import os
 import re
 import json
-from openai import OpenAI
 import gspread
 import pytz
+from youtubeListener import start_youtube_watcher
+from openai import OpenAI
 from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
@@ -17,16 +18,16 @@ USER_ID = int(os.getenv("USER_ID", "0"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME")
 
+intents = discord.Intents.default()
+intents.message_content = True
+client = discord.Client(intents=intents)
+
 # Setup AI
 openAIClient = OpenAI(api_key=OPENAI_API_KEY)
 
 # Setup Google Sheets
 scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-json_str = os.getenv("GOOGLE_CREDS_JSON")
-if not json_str:
-    raise Exception("Missing GOOGLE_CREDS_JSON environment variable")
-creds_dict = json.loads(json_str)
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("google-creds.json", scope)
 gc = gspread.authorize(creds)
 sheet = gc.open(GOOGLE_SHEET_NAME)
 trades_sheet = sheet.worksheet("Trades")
@@ -296,6 +297,7 @@ def log_unparsed_trade(message_content, date_str, time_str, error_reason):
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user}!')
+    client.loop.create_task(start_youtube_watcher(client))
 
 @client.event
 async def on_message(message):
